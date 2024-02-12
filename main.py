@@ -1,22 +1,20 @@
-from flask import Flask, request, send_file, make_response
+import pytesseract
+import langid
+from googletrans import Translator
+from gtts import gTTS
+from ultralytics import YOLO
+from flask import Flask, request, send_file
+from googletrans import Translator
 from flask_restful import Resource, Api
 import io
-
-from pygame import mixer
-import time
-from tempfile import TemporaryFile
-
-import numpy as np
 from sklearn.cluster import KMeans
 from skimage import io
 import webcolors
-
 from googletrans import Translator
-
-import subprocess
+# import subprocess
 from gtts import gTTS
-###from IPython.display import Audio, display
-from playsound import playsound
+# Ultralytics
+from ultralytics import YOLO
 
 
 app = Flask(__name__)
@@ -25,12 +23,9 @@ api = Api(app)
 class colorDedection(Resource):
     def post(self):
         try:
-            # استخراج ملف الصوت من الطلب
-            # audio = request.files['audio']
             image=request.files['image']
             image.save("image.jpg")
             #===============================            
-            # Load the image from a URL
             image_url = "image.jpg"
             image = io.imread(image_url)
 
@@ -98,12 +93,6 @@ class colorDedection(Resource):
 
             closest_primary_color = min(primary_colors, key=lambda color: euclidean_distance(primary_colors[color], dominant_color_rgb))
 
-            print(f"The nearest primary color to the hex color is {closest_primary_color}.")
-            #=================
-
-
-
-
             # Load the image from a local file
             image_path = "image.jpg"
             image = io.imread(image_path)
@@ -145,101 +134,91 @@ class colorDedection(Resource):
                 print(f"Nearest primary color {i+1}: {nearest_primary_colors[i]}")
 
             outPut_colors = (' and ').join(nearest_primary_colors)
-            print(f"The dominant color(s) in the image is/are: {outPut_colors}")
-            #================
-
 
             #======================
             translator = Translator()
             translated_color = translator.translate(outPut_colors, src='en', dest='ar')
             output_color = translated_color.text
-            print(translated_color)
-            #==============
-
-
 
             # Convert the detected objects to speech
             tts = gTTS("اللون هو ال" + output_color, lang='ar')
-            #tts.save("color.mp3")
-            mixer.init()
+            tts.save("color.mp3")
 
-            sf=TemporaryFile()
-            tts.write_to_fp(sf)
-            sf.seek(0)
-            mixer.music.load(sf)
-            mixer.music.play()
-
-
-            # إيقاف تشغيل الملف الصوتي
-            #pygame.mixer.music.stop()
-            ######playsound("color.mp3")
-            
-            # Display the spoken result in the Colab notebook
-            ##display(Audio("color.mp3"))
-
-            #audio=tts
-            #=================================
-            # قراءة محتوى الملف كبايت
-            #audio_content = audio.read()
-
-            # إعداد الاستجابة لتشغيل محتوى الملف الصوتي مباشرة
-            #response = make_response(audio_content)
-            #response.headers['Content-Type'] = 'audio/wav'
-            #response.headers['Content-Disposition'] = 'inline; filename=audio.wav'
-            
-            
-            import os 
-            file = 'image.jpg'
-            location = "D:\Program Files\VSCode\First API"
-            path = os.path.join(location, file) 
-            os.remove(path) 
-            
-
-            return "success"
+            return send_file('./color.mp3', mimetype='audio/mp3', as_attachment=True)
         except Exception as e:
             return {'error': str(e)}, 500  # رمز الخطأ 500 لخطأ في الخادم
 
 class textDedection(Resource):
     def post(self):
         try:
-            # استخراج ملف الصوت من الطلب
-            # audio = request.files['audio']
-            image=request.files['image']
-            image.save("image.jpg")
+            # Open the image from the downloaded content
+            image = request.files['image']
+            image.save("ocr.png")
 
+            def detect_language(text):
+                # Detect the language of the text
+                lang, _ = langid.classify(text)
+                return lang
 
+            # Perform OCR on the image
+            extracted_text = pytesseract.image_to_string("ocr.png", lang='eng+ara')
 
+            if not extracted_text:
+                print("No text found in the image.")
+                tts = gTTS("مفيش كلام فى الصورة", lang='ar')
+            else:
+                ## Translate the color name to Arabic
+                if detect_language(extracted_text) == 'en':
+                    translator = Translator()
+                    translated_extracted_text = translator.translate(extracted_text, src='en', dest='ar')
+                    myText = "الكلام باللغة الإنجليزية ولكن تمت ترجمته من قبلنا لنبدأ : "
+                    output_text = translated_extracted_text.text
+                    tts = gTTS(myText + output_text, lang='ar')
+                else:
+                    translated_extracted_text = extracted_text
+                    tts = gTTS(translated_extracted_text, lang='ar')
+                    print(translated_extracted_text)
 
-            import os 
-            file = 'image.jpg'
-            location = "D:\Program Files\VSCode\First API"
-            path = os.path.join(location, file) 
-            os.remove(path) 
-
-
-            return "success"
+            tts.save("extracted_text.mp3")
+            return send_file('./extracted_text.mp3', mimetype='audio/mp3', as_attachment=True)
         except Exception as e:
             return {'error': str(e)}, 500  # رمز الخطأ 500 لخطأ في الخادم
 
 class objectDedection(Resource):
     def post(self):
         try:
-            # استخراج ملف الصوت من الطلب
-            # audio = request.files['audio']
             image=request.files['image']
             image.save("image.jpg")
+            #===============================            
+            image_url = "image.jpg"
+            # To Translate
+            model = YOLO("yolov8n.pt")
+            results = model.predict(image_url)
+            cls= results[0].boxes.cls
+            classes = dict()
+            for cno in cls:
+                if model.names[int(cno)] not in classes:
+                    classes[model.names[int(cno)]] = 1
+                else:
+                    classes[model.names[int(cno)]] += 1        
 
+            msg = "there is: "
 
-            
+            for c in classes:
+                msg += str(classes[c]) + " " + c + " and "    
+                
+            # Create a Translator object
+            translator = Translator()
 
-            import os 
-            file = 'image.jpg'
-            location = "D:\Program Files\VSCode\First API"
-            path = os.path.join(location, file) 
-            os.remove(path) 
+            # Translate "Detected Objects" to Arabic
+            translated_text = translator.translate(msg, src='en', dest='ar').text
 
+            print(translated_text)
+            # Convert the detected objects to speech
+            tts = gTTS(translated_text, lang='ar')
+            tts.save("text.mp3")
 
-            return "success"
+            return send_file('./text.mp3', mimetype='audio/mp3', as_attachment=True)
         except Exception as e:
             return {'error': str(e)}, 500  # رمز الخطأ 500 لخطأ في الخادم
 
@@ -248,4 +227,7 @@ api.add_resource(textDedection, '/textDedection')
 api.add_resource(objectDedection, '/objectDedection')
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    app.run(debug=True, host='0.0.0.0')
+
+
